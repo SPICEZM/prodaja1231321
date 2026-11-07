@@ -2,15 +2,18 @@ import asyncio
 import logging
 import os
 import sys
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.exceptions import TelegramBadRequest
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+PORT = int(os.getenv("PORT", 10000))
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Список запрещенных слов (можешь дополнять)
+# Список запрещенных слов
 BAD_WORDS = ["спам", "скам", "заработок", "крипта", "casino", "казино", "блять", "хуй"]
 
 # 1. Приветствие новых участников
@@ -26,14 +29,15 @@ async def welcome_new_member(event: types.ChatMemberUpdated):
 # 2. Модерация текста (удаление мата/спама)
 @dp.message(F.text)
 async def moderate_chat(message: types.Message):
-    # Пропускаем сообщения от админов
-    member = await message.bot.get_chat_member(message.chat.id, message.from_user.id)
-    if member.status in ["creator", "administrator"]:
-        return
+    try:
+        member = await message.bot.get_chat_member(message.chat.id, message.from_user.id)
+        if member.status in ["creator", "administrator"]:
+            return
+    except Exception:
+        pass
 
     text_lower = message.text.lower()
     
-    # Проверяем на плохие слова
     for word in BAD_WORDS:
         if word in text_lower:
             try:
@@ -41,7 +45,6 @@ async def moderate_chat(message: types.Message):
                 warning = await message.answer(
                     f"Эй, @{message.from_user.username or message.from_user.first_name}, завязывай базарить. Мусор почищен."
                 )
-                # Удаляем предупреждение через 5 секунд, чтобы не засорять чат
                 await asyncio.sleep(5)
                 await warning.delete()
             except TelegramBadRequest:
@@ -55,11 +58,13 @@ async def ban_user(message: types.Message):
         await message.answer("Эту команду нужно использовать ответом на сообщение нарушителя!")
         return
     
-    # Проверяем, админ ли тот, кто вызывает команду
-    admin_check = await message.bot.get_chat_member(message.chat.id, message.from_user.id)
-    if admin_check.status not in ["creator", "administrator"]:
-        await message.answer("Ты не админ, чтобы налево и направо бананами раскидываться.")
-        return
+    try:
+        admin_check = await message.bot.get_chat_member(message.chat.id, message.from_user.id)
+        if admin_check.status not in ["creator", "administrator"]:
+            await message.answer("Ты не админ, чтобы налево и направо бананами раскидываться.")
+            return
+    except Exception:
+        pass
 
     target_user = message.reply_to_message.from_user
     try:
@@ -68,8 +73,22 @@ async def ban_user(message: types.Message):
     except Exception as e:
         await message.answer(f"Не получилось забанить: {e}")
 
+# Веб-сервер для удержания порта на Render
+async def handle_ping(request):
+    return web.Response(text="Moderator bot is alive!")
+
+async def web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+
 async def main():
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+    await web_server()
+    # Запускаем поллинг со сбросом старых сессий
     await dp.start_polling(bot, drop_pending_updates=True)
 
 if __name__ == "__main__":
