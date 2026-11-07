@@ -16,25 +16,25 @@ dp = Dispatcher()
 # Список запрещенных слов
 BAD_WORDS = ["спам", "скам", "заработок", "крипта", "casino", "казино", "блять", "хуй"]
 
-# 1. Приветствие новых участников
+# 1. Приветствие новых участников (работает в обычных чатах)
 @dp.chat_member()
 async def welcome_new_member(event: types.ChatMemberUpdated):
     if event.new_chat_member.status == "member" and event.old_chat_member.status == "left":
         user_name = event.new_chat_member.user.first_name
-        await event.bot.send_message(
-            event.chat.id,
-            f"Здарова, {user_name}. Добро пожаловать в хату. Не баклань, правила чата соблюдай."
-        )
+        try:
+            await event.bot.send_message(
+                event.chat.id,
+                f"Здарова, {user_name}. Добро пожаловать в хату. Не баклань, правила соблюдай."
+            )
+        except Exception:
+            pass
 
-# 2. Модерация текста (удаление мата/спама)
+# 2. Модерация текста (удаление мата/спама везде, включая комментарии)
 @dp.message(F.text)
 async def moderate_chat(message: types.Message):
-    try:
-        member = await message.bot.get_chat_member(message.chat.id, message.from_user.id)
-        if member.status in ["creator", "administrator"]:
-            return
-    except Exception:
-        pass
+    # Если сообщение от самого бота — игнорируем
+    if message.from_user and message.from_user.id == bot.id:
+        return
 
     text_lower = message.text.lower()
     
@@ -43,9 +43,9 @@ async def moderate_chat(message: types.Message):
             try:
                 await message.delete()
                 warning = await message.answer(
-                    f"Эй, @{message.from_user.username or message.from_user.first_name}, завязывай базарить. Мусор почищен."
+                    f"Эй, завязывай базарить. Мусор почищен."
                 )
-                await asyncio.sleep(5)
+                await asyncio.sleep(4)
                 await warning.delete()
             except TelegramBadRequest:
                 pass
@@ -55,23 +55,20 @@ async def moderate_chat(message: types.Message):
 @dp.message(Command("ban"))
 async def ban_user(message: types.Message):
     if not message.reply_to_message:
-        await message.answer("Эту команду нужно использовать ответом на сообщение нарушителя!")
+        await message.answer("Эту команду нужно юзать ответом на сообщение того, кого хочешь снести!")
         return
-    
-    try:
-        admin_check = await message.bot.get_chat_member(message.chat.id, message.from_user.id)
-        if admin_check.status not in ["creator", "administrator"]:
-            await message.answer("Ты не админ, чтобы налево и направо бананами раскидываться.")
-            return
-    except Exception:
-        pass
 
     target_user = message.reply_to_message.from_user
+    if not target_user:
+        await message.answer("Не могу распознать пользователя.")
+        return
+
     try:
+        # Пробуем забанить в чате / комментариях
         await message.chat.ban(user_id=target_user.id)
-        await message.answer(f"Пользователь {target_user.first_name} отлетает в бан за нарушение режима.")
+        await message.answer(f"Пользователь {target_user.first_name} отлетает в бан.")
     except Exception as e:
-        await message.answer(f"Не получилось забанить: {e}")
+        await message.answer(f"Не получилось натянуть бан (возможно, у бота нет прав админа): {e}")
 
 # Веб-сервер для удержания порта на Render
 async def handle_ping(request):
@@ -88,7 +85,6 @@ async def web_server():
 async def main():
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     await web_server()
-    # Запускаем поллинг со сбросом старых сессий
     await dp.start_polling(bot, drop_pending_updates=True)
 
 if __name__ == "__main__":
