@@ -13,10 +13,14 @@ PORT = int(os.getenv("PORT", 10000))
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Список запрещенных слов
-BAD_WORDS = ["спам", "скам", "заработок", "крипта", "casino", "казино", "блять", "хуй"]
+# Расширенный список запрещенных слов под твой уличный вайб
+BAD_WORDS = [
+    "пидор", "чмо", "хуесос", "блядина", "гондон", 
+    "уебок", "мать шлюха", "маму ебал", "спам", "скам",
+    "казино", "casino", "заработок", "крипта", "блять", "хуй"
+]
 
-# 1. Приветствие новых участников (работает в обычных чатах)
+# 1. Приветствие новых участников (для обычных чатов)
 @dp.chat_member()
 async def welcome_new_member(event: types.ChatMemberUpdated):
     if event.new_chat_member.status == "member" and event.old_chat_member.status == "left":
@@ -29,10 +33,9 @@ async def welcome_new_member(event: types.ChatMemberUpdated):
         except Exception:
             pass
 
-# 2. Модерация текста (удаление мата/спама везде, включая комментарии)
+# 2. Модерация текста (удаление мата и запрещенки везде, включая комментарии)
 @dp.message(F.text)
 async def moderate_chat(message: types.Message):
-    # Если сообщение от самого бота — игнорируем
     if message.from_user and message.from_user.id == bot.id:
         return
 
@@ -43,7 +46,7 @@ async def moderate_chat(message: types.Message):
             try:
                 await message.delete()
                 warning = await message.answer(
-                    f"Эй, завязывай базарить. Мусор почищен."
+                    "Эй, завязывай базарить. Мусор почищен."
                 )
                 await asyncio.sleep(4)
                 await warning.delete()
@@ -64,11 +67,10 @@ async def ban_user(message: types.Message):
         return
 
     try:
-        # Пробуем забанить в чате / комментариях
         await message.chat.ban(user_id=target_user.id)
         await message.answer(f"Пользователь {target_user.first_name} отлетает в бан.")
     except Exception as e:
-        await message.answer(f"Не получилось натянуть бан (возможно, у бота нет прав админа): {e}")
+        await message.answer(f"Не получилось натянуть бан (проверь права админа): {e}")
 
 # Веб-сервер для удержания порта на Render
 async def handle_ping(request):
