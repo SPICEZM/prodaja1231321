@@ -1,4 +1,5 @@
 import os
+import json
 import asyncio
 from aiohttp import web
 from aiogram import Bot, Dispatcher
@@ -15,81 +16,113 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-users_db = {}
-referrals_db = {} 
+DB_FILE = "users_data.json"
+
+# Загружаем базу из файла, чтобы при перезапуске ничего не сгорало
+def load_db():
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+# Сохраняем базу в файл
+def save_db():
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(users_db, f, ensure_ascii=False, indent=4)
+
+users_db = load_db() # Формат: {str(user_id): {"username": "...", "refs_count": 0, "role": "пацык"}}
 ROLES = ["пацык", "реферал", "принцеска", "админ", "слуга", "владелец", "босс"]
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    user_id = message.from_user.id
+    user_id_str = str(message.from_user.id)
     username = message.from_user.username or message.from_user.first_name
     
     args = message.text.split()
     if len(args) > 1:
         ref_arg = args[1]
         if ref_arg.isdigit():
-            referrer_id = int(ref_arg)
-            # Если это новый тип и он не рефералит сам себя
-            if referrer_id != user_id and user_id not in referrals_db:
-                referrals_db[user_id] = referrer_id
+            referrer_id_str = ref_arg
+            # Если реферер существует и это не саморефка
+            if referrer_id_str != user_id_str and referrer_id_str in users_db:
+                # Проверяем, не был ли этот пользователь уже приглашен кем-то ранее
+                already_referred = False
+                for uid, data in users_db.items():
+                    if "invited" in data and user_id_str in data["invited"]:
+                        already_referred = True
+                        break
                 
-                if referrer_id in users_db:
-                    users_db[referrer_id]["refs_count"] += 1
-                    count = users_db[referrer_id]["refs_count"]
+                if not already_referred:
+                    if "invited" not in users_db[referrer_id_str]:
+                        users_db[referrer_id_str]["invited"] = []
                     
-                    # Уведомляем пригласившего в ЛС или фиксируем
+                    users_db[referrer_id_str]["invited"].append(user_id_str)
+                    users_db[referrer_id_str]["refs_count"] += 1
+                    count = users_db[referrer_id_str]["refs_count"]
+                    save_db()
+                    
                     try:
                         await bot.send_message(
-                            referrer_id, 
+                            int(referrer_id_str), 
                             f"🎉 По твоей рефке зашел новый тип: @{username}!\n🔒 <i>Цемент безопасности:</i> зачтется окончательно, если протусит 3 дня. (Прогресс: {count}/10)",
                             parse_mode="HTML"
                         )
                     except:
                         pass
                     
-                    if count == 10:
+                    if count >= 10:
                         try:
                             await bot.send_message(
-                                referrer_id, 
+                                int(referrer_id_str), 
                                 f"🔥 Ты выполнил норму 10/10 и заработал бонус 50 рублей! Свяжись с админом.",
                                 parse_mode="HTML"
                             )
                         except:
                             pass
 
-    if user_id not in users_db:
-        users_db[user_id] = {
+    if user_id_str not in users_db:
+        users_db[user_id_str] = {
             "username": username,
             "refs_count": 0,
-            "role": "пацык"
+            "role": "пацык",
+            "invited": []
         }
+        save_db()
 
-    role = users_db[user_id]['role']
+    role = users_db[user_id_str]['role']
     
-    # Кнопка для перехода в ТГК прямо из бота
+    # Кнопка для входа в ТГК теперь ТОЛЬКО в боте
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🚀 Залететь в наш ТГК", url=CHANNEL_LINK)]
     ])
 
     text = (
-        f"Здарова, {username}! Добро пожаловать.\n\n"
+        f"Здарова, {username}! Добро пожаловать в систему.\n\n"
         f"Твой текущий тег: <b>{role}</b>\n\n"
-        f"Нажми кнопку ниже, чтобы перейти в наш Telegram-канал 👇"
+        f"Жми кнопку ниже, чтобы перейти в закрытый канал 👇"
     )
     await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
 @dp.message(Command("ref"))
 async def cmd_ref(message: Message):
-    user_id = message.from_user.id
+    user_id_str = str(message.from_user.id)
     bot_info = await bot.get_me()
     bot_username = bot_info.username
     
-    ref_link = f"https://t.me/{bot_username}?start={user_id}"
-    count = users_db.get(user_id, {}).get("refs_count", 0)
+    ref_link = f"https://t.me/{bot_username}?start={user_id_str}"
+    
+    if user_id_str not in users_db:
+        users_db[user_id_str] = {"username": message.from_user.username or "тип", "refs_count": 0, "role": "пацык", "invited": []}
+        save_db()
+        
+    count = users_db[user_id_str]["refs_count"]
     
     text = (
         f"🔗 <b>Твоя персональная реферальная ссылка:</b>\n{ref_link}\n\n"
-        f"📌 <i>Как это работает:</i> Кидай ссылку другу. Он жмет 'Запустить' в боте (так засчитывается рефка), после чего бот кидает его в наш ТГК {CHANNEL_LINK}!\n\n"
+        f"📌 Кидай эту ссылку друганам. Чтобы засчиталось, они должны запустить бота по ней!\n\n"
         f"👥 Приглашено гостей: <b>{count}/10</b>\n"
         f"🛡 <i>Цемент безопасности:</i> Срок удержания — 3 дня.\n"
         f"🎁 Приз за 10 человек: <b>50 рублей!</b>"
@@ -98,7 +131,7 @@ async def cmd_ref(message: Message):
 
 @dp.message(Command("setrole"))
 async def cmd_setrole(message: Message):
-    user_id = message.from_user.id
+    user_id_str = str(message.from_user.id)
     args = message.text.split(maxsplit=1)
     
     if len(args) < 2:
@@ -107,10 +140,11 @@ async def cmd_setrole(message: Message):
         
     new_role = args[1].lower()
     if new_role in ROLES:
-        if user_id in users_db:
-            users_db[user_id]["role"] = new_role
+        if user_id_str not in users_db:
+            users_db[user_id_str] = {"username": message.from_user.username, "refs_count": 0, "role": new_role, "invited": []}
         else:
-            users_db[user_id] = {"username": message.from_user.username, "refs_count": 0, "role": new_role}
+            users_db[user_id_str]["role"] = new_role
+        save_db()
         await message.answer(f"✅ Твой тег успешно изменен на: <b>{new_role}</b>", parse_mode="HTML")
     else:
         await message.answer(f"❌ Нет такого тега! Выбери из списка: {', '.join(ROLES)}")
@@ -128,7 +162,7 @@ async def start_web_server():
 
 async def main():
     await start_web_server()
-    print("Бот запущен и слушает сообщения...")
+    print("Бот запущен и сохраняет базу в файл...")
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
