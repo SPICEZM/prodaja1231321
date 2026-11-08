@@ -10,6 +10,10 @@ TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 PORT = int(os.environ.get("PORT", 10000))
 CHANNEL_LINK = "https://t.me/spaysettik"
 
+# Сюда можно вписать ID твоего чата (например, -100xxxxxxxxxx), куда будут лететь уведомления. 
+# Если оставить 0, то уведомление прилетит только пригласившему в ЛС.
+CHAT_ID_FOR_ALERTS = 0 
+
 if not TOKEN:
     print("ВНИМАНИЕ: TELEGRAM_BOT_TOKEN не задан!")
 
@@ -18,7 +22,6 @@ dp = Dispatcher()
 
 DB_FILE = "users_data.json"
 
-# Загружаем базу из файла, чтобы при перезапуске ничего не сгорало
 def load_db():
     if os.path.exists(DB_FILE):
         try:
@@ -28,12 +31,11 @@ def load_db():
             return {}
     return {}
 
-# Сохраняем базу в файл
 def save_db():
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(users_db, f, ensure_ascii=False, indent=4)
 
-users_db = load_db() # Формат: {str(user_id): {"username": "...", "refs_count": 0, "role": "пацык"}}
+users_db = load_db()
 ROLES = ["пацык", "реферал", "принцеска", "админ", "слуга", "владелец", "босс"]
 
 @dp.message(Command("start"))
@@ -46,9 +48,8 @@ async def cmd_start(message: Message):
         ref_arg = args[1]
         if ref_arg.isdigit():
             referrer_id_str = ref_arg
-            # Если реферер существует и это не саморефка
+            
             if referrer_id_str != user_id_str and referrer_id_str in users_db:
-                # Проверяем, не был ли этот пользователь уже приглашен кем-то ранее
                 already_referred = False
                 for uid, data in users_db.items():
                     if "invited" in data and user_id_str in data["invited"]:
@@ -64,14 +65,29 @@ async def cmd_start(message: Message):
                     count = users_db[referrer_id_str]["refs_count"]
                     save_db()
                     
+                    # Узнаем юзернейм того, кто пригласил
+                    referrer_name = users_db[referrer_id_str].get("username", "друган")
+                    
+                    # Текст уведомления: кто зашел и кто пригласил
+                    alert_text = (
+                        f"🚨 <b>Новый гость в движухе!</b>\n"
+                        f"👤 К нам зашел: <b>@{username}</b>\n"
+                        f"🤝 Его пригласил: <b>@{referrer_name}</b>\n"
+                        f"🔒 <i>Цемент безопасности:</i> зачтется окончательно через 3 дня. (Прогресс пригласившего: {count}/10)"
+                    )
+                    
+                    # Шлем уведомление пригласившему в ЛС
                     try:
-                        await bot.send_message(
-                            int(referrer_id_str), 
-                            f"🎉 По твоей рефке зашел новый тип: @{username}!\n🔒 <i>Цемент безопасности:</i> зачтется окончательно, если протусит 3 дня. (Прогресс: {count}/10)",
-                            parse_mode="HTML"
-                        )
+                        await bot.send_message(int(referrer_id_str), alert_text, parse_mode="HTML")
                     except:
                         pass
+                    
+                    # Если указан ID общего чата, дублируем туда
+                    if CHAT_ID_FOR_ALERTS != 0:
+                        try:
+                            await bot.send_message(CHAT_ID_FOR_ALERTS, alert_text, parse_mode="HTML")
+                        except:
+                            pass
                     
                     if count >= 10:
                         try:
@@ -94,7 +110,6 @@ async def cmd_start(message: Message):
 
     role = users_db[user_id_str]['role']
     
-    # Кнопка для входа в ТГК теперь ТОЛЬКО в боте
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🚀 Залететь в наш ТГК", url=CHANNEL_LINK)]
     ])
@@ -162,7 +177,7 @@ async def start_web_server():
 
 async def main():
     await start_web_server()
-    print("Бот запущен и сохраняет базу в файл...")
+    print("Бот запущен с именными уведомлениями о рефералах...")
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
