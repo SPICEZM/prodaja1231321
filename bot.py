@@ -1,25 +1,23 @@
 import os
 import asyncio
-import logging
 from aiohttp import web
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import Message, ParseMode
 
-# Настройки токена
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-PORT = int(os.environ.get("PORT", 10000)) # Порт, который требует Render
+PORT = int(os.environ.get("PORT", 10000))
+CHANNEL_LINK = "https://t.me/spaysettik" # Твой ТГК
 
 if not TOKEN:
-    print("ВНИМАНИЕ: TELEGRAM_BOT_TOKEN не задан в переменных окружения!")
+    print("ВНИМАНИЕ: TELEGRAM_BOT_TOKEN не задан!")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Базы данных в памяти
+# Базы данных
 users_db = {}
 referrals_db = {} 
-
 ROLES = ["пацык", "реферал", "принцеска", "админ", "слуга", "владелец", "босс"]
 
 @dp.message(Command("start"))
@@ -39,11 +37,11 @@ async def cmd_start(message: Message):
                     users_db[referrer_id]["refs_count"] += 1
                     count = users_db[referrer_id]["refs_count"]
                     
-                    notification = f"🎉 К нам поступил новый гость! Его пригласил @{username} (Прогресс: {count}/10)"
-                    await message.answer(notification)
+                    notification = f"🎉 К нам поступил новый гость! Его пригласил @{username}.\n🔒 <i>Цемент безопасности:</i> зачтется окончательно, если простоит 3 дня! (Прогресс: {count}/10)"
+                    await message.answer(notification, parse_mode=ParseMode.HTML)
                     
                     if count == 10:
-                        await message.answer(f"🔥 @{username} выполнил норму 10/10 и заработал бонус 50 рублей! Свяжитесь с админом для выплаты.")
+                        await message.answer(f"🔥 @{username} выполнил норму 10/10 и заработал бонус 50 рублей! Свяжитесь с админом для выплаты.", parse_mode=ParseMode.HTML)
 
     if user_id not in users_db:
         users_db[user_id] = {
@@ -52,11 +50,13 @@ async def cmd_start(message: Message):
             "role": "пацык"
         }
 
-    await message.answer(
-        f"Здарова, {username}! Добро пожаловать в наше сообщество.\n\n"
+    text = (
+        f"Здарова, {username}! Добро пожаловать.\n\n"
         f"Твой текущий тег: <b>{users_db[user_id]['role']}</b>\n\n"
-        f"Используй команду /ref, чтобы получить свою реферальную ссылку и приглашать друзей (награда: 50 руб за 10 человек)!"
+        f"📢 Наш канал: {CHANNEL_LINK}\n\n"
+        f"Используй команду /ref, чтобы забрать свою рефералку!"
     )
+    await message.answer(text, parse_mode=ParseMode.HTML)
 
 @dp.message(Command("ref"))
 async def cmd_ref(message: Message):
@@ -64,14 +64,18 @@ async def cmd_ref(message: Message):
     bot_info = await bot.get_me()
     bot_username = bot_info.username
     
+    # Реферальная ссылка, которая ведет в бота, а бот уже приветствует от твоего ТГК
     ref_link = f"https://t.me/{bot_username}?start={user_id}"
     count = users_db.get(user_id, {}).get("refs_count", 0)
     
-    await message.answer(
+    text = (
         f"🔗 <b>Твоя персональная реферальная ссылка:</b>\n{ref_link}\n\n"
+        f"📌 <i>Как звать гостей в ТГК:</i> Кидай эту ссылку друзьям, пусть переходят в бот и подписываются на наш канал {CHANNEL_LINK}!\n\n"
         f"👥 Приглашено гостей: <b>{count}/10</b>\n"
-        f"🎁 Приз за 10 приглашенных: <b>50 рублей!</b>"
+        f"🛡 <i>Условие:</i> Гость должен пробыть в теме от 3 дней.\n"
+        f"🎁 Приз за 10 человек: <b>50 рублей!</b>"
     )
+    await message.answer(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 @dp.message(Command("setrole"))
 async def cmd_setrole(message: Message):
@@ -88,11 +92,10 @@ async def cmd_setrole(message: Message):
             users_db[user_id]["role"] = new_role
         else:
             users_db[user_id] = {"username": message.from_user.username, "refs_count": 0, "role": new_role}
-        await message.answer(f"✅ Твой тег успешно изменен на: <b>{new_role}</b>")
+        await message.answer(f"✅ Твой тег успешно изменен на: <b>{new_role}</b>", parse_mode=ParseMode.HTML)
     else:
         await message.answer(f"❌ Нет такого тега! Выбери из списка: {', '.join(ROLES)}")
 
-# Заглушка веб-сервера для Render, чтобы он видел открытый порт
 async def handle_ping(request):
     return web.Response(text="Bot is running!")
 
@@ -103,10 +106,8 @@ async def start_web_server():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    print(f"Веб-сервер запущен на порту {PORT}")
 
 async def main():
-    # Запускаем и веб-сервер для порта, и поллинг бота одновременно
     await start_web_server()
     print("Бот запущен и слушает сообщения...")
     await dp.start_polling(bot)
