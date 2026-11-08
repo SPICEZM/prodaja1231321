@@ -1,11 +1,14 @@
 import os
+import asyncio
 import logging
+from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import Message
 
-# Получаем токен бота из переменных окружения Render
+# Настройки токена
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+PORT = int(os.environ.get("PORT", 10000)) # Порт, который требует Render
 
 if not TOKEN:
     print("ВНИМАНИЕ: TELEGRAM_BOT_TOKEN не задан в переменных окружения!")
@@ -13,12 +16,10 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# База данных в памяти (для простоты): 
-# ключи — user_id, значения — данные (username, рефералы, баланс, роль)
+# Базы данных в памяти
 users_db = {}
-referrals_db = {} # кто кого пригласил: {invited_id: referrer_id}
+referrals_db = {} 
 
-# Список доступных тегов/ролей
 ROLES = ["пацык", "реферал", "принцеска", "админ", "слуга", "владелец", "босс"]
 
 @dp.message(Command("start"))
@@ -26,35 +27,29 @@ async def cmd_start(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username or message.from_user.first_name
     
-    # Проверяем, не по реферальной ли ссылке зашел тип
     args = message.text.split()
     if len(args) > 1:
         ref_arg = args[1]
         if ref_arg.isdigit():
             referrer_id = int(ref_arg)
-            # Если пользователь новый и не приглашал сам себя
             if referrer_id != user_id and user_id not in referrals_db:
                 referrals_db[user_id] = referrer_id
                 
-                # Добавляем реферала пригласившему
                 if referrer_id in users_db:
                     users_db[referrer_id]["refs_count"] += 1
                     count = users_db[referrer_id]["refs_count"]
                     
-                    # Уведомляем в чат о новом госте
                     notification = f"🎉 К нам поступил новый гость! Его пригласил @{username} (Прогресс: {count}/10)"
                     await message.answer(notification)
                     
-                    # Проверяем бонус 50 рублей за 10 рефералов
                     if count == 10:
                         await message.answer(f"🔥 @{username} выполнил норму 10/10 и заработал бонус 50 рублей! Свяжитесь с админом для выплаты.")
 
-    # Регистрация пользователя в базе
     if user_id not in users_db:
         users_db[user_id] = {
             "username": username,
             "refs_count": 0,
-            "role": "пацык" # Базовый тег по умолчанию
+            "role": "пацык"
         }
 
     await message.answer(
@@ -80,7 +75,6 @@ async def cmd_ref(message: Message):
 
 @dp.message(Command("setrole"))
 async def cmd_setrole(message: Message):
-    # Команда для админа/владельца: /setrole <роль> (пример: /setrole босс)
     user_id = message.from_user.id
     args = message.text.split(maxsplit=1)
     
@@ -98,10 +92,24 @@ async def cmd_setrole(message: Message):
     else:
         await message.answer(f"❌ Нет такого тега! Выбери из списка: {', '.join(ROLES)}")
 
+# Заглушка веб-сервера для Render, чтобы он видел открытый порт
+async def handle_ping(request):
+    return web.Response(text="Bot is running!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    print(f"Веб-сервер запущен на порту {PORT}")
+
 async def main():
+    # Запускаем и веб-сервер для порта, и поллинг бота одновременно
+    await start_web_server()
     print("Бот запущен и слушает сообщения...")
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
-    import asyncio
     asyncio.run(main())
