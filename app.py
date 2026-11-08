@@ -1,26 +1,56 @@
 from flask import Flask, request, jsonify
 import os
+import requests
 
 app = Flask(__name__)
 
-# Главный эндпоинт, куда будут приходить сообщения (вебхуки от WhatsApp-шлюза)
+# Читаем переменные окружения, которые мы настроили на Render
+ID_INSTANCE = os.environ.get('GREEN_API_INSTANCE', '710722794392')
+API_TOKEN = os.environ.get('GREEN_API_TOKEN')
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
-    if data:
-        print("Получены данные:", data)
-        # Здесь будет логика обработки сообщений (команды, меню, сбор текста)
+    print("Получены данные от вебхука:", data)
+    
+    try:
+        # Проверяем, что это входящее текстовое сообщение
+        if data and data.get('typeWebhook') == 'incomingMessageReceived':
+            senderData = data.get('senderData', {})
+            messageData = data.get('messageData', {})
+            
+            chatId = senderData.get('chatId') # Кто написал (номер)
+            
+            # Проверяем текст сообщения
+            textMessage = ""
+            if 'textMessageData' in messageData:
+                textMessage = messageData['textMessageData'].get('textMessage', '')
+            
+            print(f"Сообщение от {chatId}: {textMessage}")
+            
+            # Логика ответа бота
+            if textMessage:
+                response_text = f"Привет! Я бот-помощник. Ты написал: «{textMessage}»"
+                
+                # Отправляем ответ через Green API
+                url = f"https://7107.api.greenapi.com/waInstance{ID_INSTANCE}/sendMessage/{API_TOKEN}"
+                payload = {
+                    "chatId": chatId,
+                    "message": response_text
+                }
+                requests.post(url, json=payload)
+                
+    except Exception as e:
+        print("Ошибка при обработке вебхука:", e)
         
     return jsonify(status="success"), 200
 
-# Эндпоинт для пинга, чтобы бесплатный сервер на Render не засыпал
 @app.route('/ping', methods=['GET'])
 def ping():
     return "I am alive!", 200
 
 @app.route('/', methods=['GET'])
 def index():
-    DOCKER_RUNNING = os.environ.get('RENDER', False)
     return "WhatsApp Bot is running!", 200
 
 if __name__ == '__main__':
