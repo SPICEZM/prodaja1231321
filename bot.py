@@ -2,17 +2,14 @@ import os
 import json
 import asyncio
 from aiohttp import web
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 PORT = int(os.environ.get("PORT", 10000))
+CHANNEL_USERNAME = "@spaysettik" # Твой канал с собачкой для проверки через API
 CHANNEL_LINK = "https://t.me/spaysettik"
-
-# Сюда можно вписать ID твоего чата (например, -100xxxxxxxxxx), куда будут лететь уведомления. 
-# Если оставить 0, то уведомление прилетит только пригласившему в ЛС.
-CHAT_ID_FOR_ALERTS = 0 
 
 if not TOKEN:
     print("ВНИМАНИЕ: TELEGRAM_BOT_TOKEN не задан!")
@@ -38,18 +35,33 @@ def save_db():
 users_db = load_db()
 ROLES = ["пацык", "реферал", "принцеска", "админ", "слуга", "владелец", "босс"]
 
+# Функция проверки подписки юзера на канал
+async def check_subscription(user_id: int) -> bool:
+    try:
+        member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        # Статусы, при которых считается, что тип подписан
+        if member.status in ["creator", "administrator", "member"]:
+            return True
+    except Exception as e:
+        print(f"Ошибка проверки подписки: {e}")
+    return False
+
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     user_id_str = str(message.from_user.id)
     username = message.from_user.username or message.from_user.first_name
     
     args = message.text.split()
+    pending_referrer = None
+    
     if len(args) > 1:
         ref_arg = args[1]
         if ref_arg.isdigit():
             referrer_id_str = ref_arg
             
+            # 🛡 ЗАЩИТА ОТ НАКРУТКИ: Запрещаем рефку самому себе
             if referrer_id_str != user_id_str and referrer_id_str in users_db:
+                # Проверяем, не засчитан ли он уже кому-то
                 already_referred = False
                 for uid, data in users_db.items():
                     if "invited" in data and user_id_str in data["invited"]:
@@ -57,69 +69,106 @@ async def cmd_start(message: Message):
                         break
                 
                 if not already_referred:
-                    if "invited" not in users_db[referrer_id_str]:
-                        users_db[referrer_id_str]["invited"] = []
-                    
-                    users_db[referrer_id_str]["invited"].append(user_id_str)
-                    users_db[referrer_id_str]["refs_count"] += 1
-                    count = users_db[referrer_id_str]["refs_count"]
-                    save_db()
-                    
-                    # Узнаем юзернейм того, кто пригласил
-                    referrer_name = users_db[referrer_id_str].get("username", "друган")
-                    
-                    # Текст уведомления: кто зашел и кто пригласил
-                    alert_text = (
-                        f"🚨 <b>Новый гость в движухе!</b>\n"
-                        f"👤 К нам зашел: <b>@{username}</b>\n"
-                        f"🤝 Его пригласил: <b>@{referrer_name}</b>\n"
-                        f"🔒 <i>Цемент безопасности:</i> зачтется окончательно через 3 дня. (Прогресс пригласившего: {count}/10)"
-                    )
-                    
-                    # Шлем уведомление пригласившему в ЛС
-                    try:
-                        await bot.send_message(int(referrer_id_str), alert_text, parse_mode="HTML")
-                    except:
-                        pass
-                    
-                    # Если указан ID общего чата, дублируем туда
-                    if CHAT_ID_FOR_ALERTS != 0:
-                        try:
-                            await bot.send_message(CHAT_ID_FOR_ALERTS, alert_text, parse_mode="HTML")
-                        except:
-                            pass
-                    
-                    if count >= 10:
-                        try:
-                            await bot.send_message(
-                                int(referrer_id_str), 
-                                f"🔥 Ты выполнил норму 10/10 и заработал бонус 50 рублей! Свяжись с админом.",
-                                parse_mode="HTML"
-                            )
-                        except:
-                            pass
+                    pending_referrer = referrer_id_str
 
     if user_id_str not in users_db:
         users_db[user_id_str] = {
             "username": username,
             "refs_count": 0,
             "role": "пацык",
-            "invited": []
+            "invited": [],
+            "pending_ref": pending_referrer # Временный реферер до проверки подписки
         }
         save_db()
+    else:
+        # Если юзер уже был, но зашел по новой рефке и еще никем не зафиксирован
+        if pending_referrer and not users_db[user_id_str].get("invited_by"):
+            users_db[user_id_str]["pending_ref"] = pending_referrer
+            save_db()
+
+    # Проверяем, подписан ли уже на канал
+    is_subscribed = await check_subscription(message.from_user.id)
+    
+    if is_subscribed and users_db[user_id_str].get("pending_ref"):
+        # Если подписан и есть висящий реферер — засчитываем официально!
+        ref_id = users_db[user_id_str]["pending_ref"]
+        if ref_id in users_db and user_id_str not in users_db[ref_id]["invited"]:
+            users_db[ref_id]["invited"].append(user_id_str)
+            users_db[ref_id]["refs_count"] += 1
+            count = users_db[ref_id]["refs_count"]
+            users_db[user_id_str]["pending_ref"] = None
+            users_db[user_id_str]["invited_by"] = ref_id
+            save_db()
+            
+            referrer_name = users_db[ref_id].get("username", "друган")
+            try:
+                await bot.send_message(
+                    int(ref_id), 
+                    f"🎉 <b>Цемент схватился!</b> Новый тип @{username} подписался на канал и зачтелся тебе в рефки!\n(Прогресс: {count}/10)",
+                    parse_mode="HTML"
+                )
+            except:
+                pass
 
     role = users_db[user_id_str]['role']
     
+    # Кнопки: переход в канал + кнопка проверки подписки
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚀 Залететь в наш ТГК", url=CHANNEL_LINK)]
+        [InlineKeyboardButton(text="📢 Подписаться на ТГК", url=CHANNEL_LINK)],
+        [InlineKeyboardButton(text="✅ Проверить подписку и зачесть рефку", callback_data="check_sub")]
     ])
 
     text = (
-        f"Здарова, {username}! Добро пожаловать в систему.\n\n"
+        f"Здарова, {username}! Добро пожаловать.\n\n"
         f"Твой текущий тег: <b>{role}</b>\n\n"
-        f"Жми кнопку ниже, чтобы перейти в закрытый канал 👇"
+        f"⚠️ <b>Внимание (Цемент безопасности):</b> Чтобы твой друг получил балл за приглашение, тебе нужно подписаться на наш канал кнопкой ниже и нажать проверку!"
     )
     await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+# Обработка нажатия на кнопку проверки подписки
+@dp.callback_query(F.data == "check_sub")
+async def process_check_sub(callback: CallbackQuery):
+    user_id_str = str(callback.from_user.id)
+    username = callback.from_user.username or callback.from_user.first_name
+    
+    is_subscribed = await check_subscription(callback.from_user.id)
+    
+    if not is_subscribed:
+        await callback.answer("❌ Ты еще не подписался на канал! Подпишись, потом жми проверку.", show_alert=True)
+        return
+        
+    # Если подписан
+    if user_id_str in users_db and users_db[user_id_str].get("pending_ref"):
+        ref_id = users_db[user_id_str]["pending_ref"]
+        if ref_id in users_db and user_id_str not in users_db[ref_id]["invited"]:
+            users_db[ref_id]["invited"].append(user_id_str)
+            users_db[ref_id]["refs_count"] += 1
+            count = users_db[ref_id]["refs_count"]
+            users_db[user_id_str]["pending_ref"] = None
+            users_db[user_id_str]["invited_by"] = ref_id
+            save_db()
+            
+            referrer_name = users_db[ref_id].get("username", "друган")
+            try:
+                await bot.send_message(
+                    int(ref_id), 
+                    f"🎉 <b>Цемент схватился!</b> @{username} подтвердил подписку по твоей рефке!\n(Прогресс: {count}/10)",
+                    parse_mode="HTML"
+                )
+            except:
+                pass
+                
+            if count >= 10:
+                try:
+                    await bot.send_message(int(ref_id), f"🔥 Норма 10/10 выполнена! Свяжись с админом для получения 50 рублей.", parse_mode="HTML")
+                except:
+                    pass
+
+    await callback.message.edit_text(
+        f"✅ <b>Подписка успешно подтверждена!</b> Добро в движуху оформлено.",
+        parse_mode="HTML"
+    )
+    await callback.answer()
 
 @dp.message(Command("ref"))
 async def cmd_ref(message: Message):
@@ -137,9 +186,8 @@ async def cmd_ref(message: Message):
     
     text = (
         f"🔗 <b>Твоя персональная реферальная ссылка:</b>\n{ref_link}\n\n"
-        f"📌 Кидай эту ссылку друганам. Чтобы засчиталось, они должны запустить бота по ней!\n\n"
+        f"🛡 <b>Защита от накрутки (Цемент):</b> Рефка засчитается только после того, как гость запустит бота и нажмет кнопку проверки подписки на канал!\n\n"
         f"👥 Приглашено гостей: <b>{count}/10</b>\n"
-        f"🛡 <i>Цемент безопасности:</i> Срок удержания — 3 дня.\n"
         f"🎁 Приз за 10 человек: <b>50 рублей!</b>"
     )
     await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
@@ -177,7 +225,7 @@ async def start_web_server():
 
 async def main():
     await start_web_server()
-    print("Бот запущен с именными уведомлениями о рефералах...")
+    print("Бот запущен с защитой от накрутки и проверкой подписок...")
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
