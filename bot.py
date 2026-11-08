@@ -8,8 +8,11 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 PORT = int(os.environ.get("PORT", 10000))
-CHANNEL_USERNAME = "@spaysettik" # Твой канал с собачкой для проверки через API
+CHANNEL_USERNAME = "@spaysettik"
 CHANNEL_LINK = "https://t.me/spaysettik"
+
+# Твой личный Telegram ID для получения отчетов о рефералах в ЛС
+ADMIN_CHAT_ID = 8381183474
 
 if not TOKEN:
     print("ВНИМАНИЕ: TELEGRAM_BOT_TOKEN не задан!")
@@ -35,11 +38,9 @@ def save_db():
 users_db = load_db()
 ROLES = ["пацык", "реферал", "принцеска", "админ", "слуга", "владелец", "босс"]
 
-# Функция проверки подписки юзера на канал
 async def check_subscription(user_id: int) -> bool:
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
-        # Статусы, при которых считается, что тип подписан
         if member.status in ["creator", "administrator", "member"]:
             return True
     except Exception as e:
@@ -59,9 +60,7 @@ async def cmd_start(message: Message):
         if ref_arg.isdigit():
             referrer_id_str = ref_arg
             
-            # 🛡 ЗАЩИТА ОТ НАКРУТКИ: Запрещаем рефку самому себе
             if referrer_id_str != user_id_str and referrer_id_str in users_db:
-                # Проверяем, не засчитан ли он уже кому-то
                 already_referred = False
                 for uid, data in users_db.items():
                     if "invited" in data and user_id_str in data["invited"]:
@@ -77,20 +76,17 @@ async def cmd_start(message: Message):
             "refs_count": 0,
             "role": "пацык",
             "invited": [],
-            "pending_ref": pending_referrer # Временный реферер до проверки подписки
+            "pending_ref": pending_referrer
         }
         save_db()
     else:
-        # Если юзер уже был, но зашел по новой рефке и еще никем не зафиксирован
         if pending_referrer and not users_db[user_id_str].get("invited_by"):
             users_db[user_id_str]["pending_ref"] = pending_referrer
             save_db()
 
-    # Проверяем, подписан ли уже на канал
     is_subscribed = await check_subscription(message.from_user.id)
     
     if is_subscribed and users_db[user_id_str].get("pending_ref"):
-        # Если подписан и есть висящий реферер — засчитываем официально!
         ref_id = users_db[user_id_str]["pending_ref"]
         if ref_id in users_db and user_id_str not in users_db[ref_id]["invited"]:
             users_db[ref_id]["invited"].append(user_id_str)
@@ -101,18 +97,32 @@ async def cmd_start(message: Message):
             save_db()
             
             referrer_name = users_db[ref_id].get("username", "друган")
+            
+            success_text = (
+                f"🎉 <b>Новый реферал подтвержден!</b>\n"
+                f"👤 Гость: <b>@{username}</b>\n"
+                f"🤝 Пригласил: <b>@{referrer_name}</b> (Прогресс: {count}/10)"
+            )
+            
             try:
-                await bot.send_message(
-                    int(ref_id), 
-                    f"🎉 <b>Цемент схватился!</b> Новый тип @{username} подписался на канал и зачтелся тебе в рефки!\n(Прогресс: {count}/10)",
-                    parse_mode="HTML"
-                )
+                await bot.send_message(int(ref_id), success_text, parse_mode="HTML")
             except:
                 pass
+            
+            # Отправка отчета тебе в ЛС
+            try:
+                await bot.send_message(ADMIN_CHAT_ID, success_text, parse_mode="HTML")
+            except Exception as e:
+                print(f"Не удалось отправить отчет админу: {e}")
+
+            if count >= 10:
+                try:
+                    await bot.send_message(int(ref_id), f"🔥 Норма 10/10 выполнена! Свяжись с админом для получения 50 рублей.", parse_mode="HTML")
+                except:
+                    pass
 
     role = users_db[user_id_str]['role']
     
-    # Кнопки: переход в канал + кнопка проверки подписки
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 Подписаться на ТГК", url=CHANNEL_LINK)],
         [InlineKeyboardButton(text="✅ Проверить подписку и зачесть рефку", callback_data="check_sub")]
@@ -125,7 +135,6 @@ async def cmd_start(message: Message):
     )
     await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
-# Обработка нажатия на кнопку проверки подписки
 @dp.callback_query(F.data == "check_sub")
 async def process_check_sub(callback: CallbackQuery):
     user_id_str = str(callback.from_user.id)
@@ -137,7 +146,6 @@ async def process_check_sub(callback: CallbackQuery):
         await callback.answer("❌ Ты еще не подписался на канал! Подпишись, потом жми проверку.", show_alert=True)
         return
         
-    # Если подписан
     if user_id_str in users_db and users_db[user_id_str].get("pending_ref"):
         ref_id = users_db[user_id_str]["pending_ref"]
         if ref_id in users_db and user_id_str not in users_db[ref_id]["invited"]:
@@ -149,14 +157,22 @@ async def process_check_sub(callback: CallbackQuery):
             save_db()
             
             referrer_name = users_db[ref_id].get("username", "друган")
+            
+            success_text = (
+                f"🎉 <b>Новый реферал подтвержден!</b>\n"
+                f"👤 Гость: <b>@{username}</b>\n"
+                f"🤝 Пригласил: <b>@{referrer_name}</b> (Прогресс: {count}/10)"
+            )
+            
             try:
-                await bot.send_message(
-                    int(ref_id), 
-                    f"🎉 <b>Цемент схватился!</b> @{username} подтвердил подписку по твоей рефке!\n(Прогресс: {count}/10)",
-                    parse_mode="HTML"
-                )
+                await bot.send_message(int(ref_id), success_text, parse_mode="HTML")
             except:
                 pass
+                
+            try:
+                await bot.send_message(ADMIN_CHAT_ID, success_text, parse_mode="HTML")
+            except Exception as e:
+                print(f"Не удалось отправить отчет админу: {e}")
                 
             if count >= 10:
                 try:
@@ -186,7 +202,7 @@ async def cmd_ref(message: Message):
     
     text = (
         f"🔗 <b>Твоя персональная реферальная ссылка:</b>\n{ref_link}\n\n"
-        f"🛡 <b>Защита от накрутки (Цемент):</b> Рефка засчитается только после того, как гость запустит бота и нажмет кнопку проверки подписки на канал!\n\n"
+        f"🛡 <b>Защита от накрутки (Цемент):</b> Рефка засчитается только после того, как гость запустит бота и подтвердит подписку на канал!\n\n"
         f"👥 Приглашено гостей: <b>{count}/10</b>\n"
         f"🎁 Приз за 10 человек: <b>50 рублей!</b>"
     )
@@ -225,7 +241,7 @@ async def start_web_server():
 
 async def main():
     await start_web_server()
-    print("Бот запущен с защитой от накрутки и проверкой подписок...")
+    print("Бот запущен с отправкой отчетов админу в ЛС...")
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
