@@ -1,13 +1,13 @@
 import os
 import asyncio
 from aiohttp import web
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
-from aiogram.types import Message, ParseMode
+from aiogram.types import Message
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 PORT = int(os.environ.get("PORT", 10000))
-CHANNEL_LINK = "https://t.me/spaysettik" # Твой ТГК
+CHANNEL_LINK = "https://t.me/spaysettik"
 
 if not TOKEN:
     print("ВНИМАНИЕ: TELEGRAM_BOT_TOKEN не задан!")
@@ -15,7 +15,6 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Базы данных
 users_db = {}
 referrals_db = {} 
 ROLES = ["пацык", "реферал", "принцеска", "админ", "слуга", "владелец", "босс"]
@@ -37,11 +36,11 @@ async def cmd_start(message: Message):
                     users_db[referrer_id]["refs_count"] += 1
                     count = users_db[referrer_id]["refs_count"]
                     
-                    notification = f"🎉 К нам поступил новый гость! Его пригласил @{username}.\n🔒 <i>Цемент безопасности:</i> зачтется окончательно, если простоит 3 дня! (Прогресс: {count}/10)"
-                    await message.answer(notification, parse_mode=ParseMode.HTML)
+                    notification = f"🎉 К нам поступил новый гость! Его пригласил @{username}.\n🔒 <i>Цемент безопасности:</i> зачтется окончательно, если протусит 3 дня! (Прогресс: {count}/10)"
+                    await message.answer(notification, parse_mode="HTML")
                     
                     if count == 10:
-                        await message.answer(f"🔥 @{username} выполнил норму 10/10 и заработал бонус 50 рублей! Свяжитесь с админом для выплаты.", parse_mode=ParseMode.HTML)
+                        await message.answer(f"🔥 @{username} выполнил норму 10/10 и заработал бонус 50 рублей! Свяжитесь с админом.", parse_mode="HTML")
 
     if user_id not in users_db:
         users_db[user_id] = {
@@ -50,13 +49,14 @@ async def cmd_start(message: Message):
             "role": "пацык"
         }
 
+    role = users_db[user_id]['role']
     text = (
         f"Здарова, {username}! Добро пожаловать.\n\n"
-        f"Твой текущий тег: <b>{users_db[user_id]['role']}</b>\n\n"
+        f"Твой текущий тег: <b>{role}</b>\n\n"
         f"📢 Наш канал: {CHANNEL_LINK}\n\n"
         f"Используй команду /ref, чтобы забрать свою рефералку!"
     )
-    await message.answer(text, parse_mode=ParseMode.HTML)
+    await message.answer(text, parse_mode="HTML")
 
 @dp.message(Command("ref"))
 async def cmd_ref(message: Message):
@@ -64,18 +64,17 @@ async def cmd_ref(message: Message):
     bot_info = await bot.get_me()
     bot_username = bot_info.username
     
-    # Реферальная ссылка, которая ведет в бота, а бот уже приветствует от твоего ТГК
     ref_link = f"https://t.me/{bot_username}?start={user_id}"
     count = users_db.get(user_id, {}).get("refs_count", 0)
     
     text = (
         f"🔗 <b>Твоя персональная реферальная ссылка:</b>\n{ref_link}\n\n"
-        f"📌 <i>Как звать гостей в ТГК:</i> Кидай эту ссылку друзьям, пусть переходят в бот и подписываются на наш канал {CHANNEL_LINK}!\n\n"
+        f"📌 Кидай эту ссылку друзьям, пусть переходят в бот и подписываются на наш канал {CHANNEL_LINK}!\n\n"
         f"👥 Приглашено гостей: <b>{count}/10</b>\n"
-        f"🛡 <i>Условие:</i> Гость должен пробыть в теме от 3 дней.\n"
+        f"🛡 <i>Условие:</i> Гость должен пробыть в теме от 3 дней (цемент безопасности).\n"
         f"🎁 Приз за 10 человек: <b>50 рублей!</b>"
     )
-    await message.answer(text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    await message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
 
 @dp.message(Command("setrole"))
 async def cmd_setrole(message: Message):
@@ -92,7 +91,7 @@ async def cmd_setrole(message: Message):
             users_db[user_id]["role"] = new_role
         else:
             users_db[user_id] = {"username": message.from_user.username, "refs_count": 0, "role": new_role}
-        await message.answer(f"✅ Твой тег успешно изменен на: <b>{new_role}</b>", parse_mode=ParseMode.HTML)
+        await message.answer(f"✅ Твой тег успешно изменен на: <b>{new_role}</b>", parse_mode="HTML")
     else:
         await message.answer(f"❌ Нет такого тега! Выбери из списка: {', '.join(ROLES)}")
 
